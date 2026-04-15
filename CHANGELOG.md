@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.37.0] - 2026-04-15
+
+### Added
+- **Webhook payload templates now expose richer runtime fields** - custom webhook bodies can now reference structured notification/runtime data such as session metadata, git context, cwd-derived values, and rendered message fields, making integrations like Lark/Slack/custom endpoints much easier to shape without patching the plugin
+
+### Fixed
+- **Installer: release download verification is stricter and safer** - release asset validation now rejects suspicious or incomplete downloads more defensively before replacing installed binaries, reducing the chance of ending up with a corrupted update
+- **Ghostty: click-to-focus can now switch to the correct tab, not just the window** - `focus-window` now tries Ghostty's AppleScript terminal focus first and falls back to the previous `AXDocument` window-level path if Automation is unavailable or the exact terminal cannot be resolved ([#72](https://github.com/777genius/claude-notifications-go/issues/72))
+
 ## [1.36.7] - 2026-04-10
 
 ### Fixed
