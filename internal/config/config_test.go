@@ -62,8 +62,7 @@ func TestLoadConfig(t *testing.T) {
 		"statuses": {
 			"task_complete": {
 				"title": "Done",
-				"sound": "",
-				"keywords": ["done"]
+				"sound": ""
 			}
 		}
 	}`

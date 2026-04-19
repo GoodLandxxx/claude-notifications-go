@@ -24,38 +24,31 @@
   "statuses": {
     "task_complete": {
       "title": "✅ Completed",
-      "sound": "${CLAUDE_PLUGIN_ROOT}/sounds/task-complete.mp3",
-      "keywords": ["completed", "done", "finished", "успешно", "завершен"]
+      "sound": "${CLAUDE_PLUGIN_ROOT}/sounds/task-complete.mp3"
     },
     "review_complete": {
       "title": "🔍 Review",
-      "sound": "${CLAUDE_PLUGIN_ROOT}/sounds/review-complete.mp3",
-      "keywords": ["review", "ревью", "analyzed", "проверка", "analysis"]
+      "sound": "${CLAUDE_PLUGIN_ROOT}/sounds/review-complete.mp3"
     },
     "question": {
       "title": "❓ Question",
-      "sound": "${CLAUDE_PLUGIN_ROOT}/sounds/question.mp3",
-      "keywords": ["question", "вопрос", "clarify"]
+      "sound": "${CLAUDE_PLUGIN_ROOT}/sounds/question.mp3"
     },
     "plan_ready": {
       "title": "📋 Plan",
-      "sound": "${CLAUDE_PLUGIN_ROOT}/sounds/plan-ready.mp3",
-      "keywords": ["plan", "план", "strategy"]
+      "sound": "${CLAUDE_PLUGIN_ROOT}/sounds/plan-ready.mp3"
     },
     "session_limit_reached": {
       "title": "⏱️ Session Limit Reached",
-      "sound": "${CLAUDE_PLUGIN_ROOT}/sounds/question.mp3",
-      "keywords": ["session limit", "limit reached"]
+      "sound": "${CLAUDE_PLUGIN_ROOT}/sounds/question.mp3"
     },
     "api_error": {
       "title": "🔴 API Error: 401",
-      "sound": "${CLAUDE_PLUGIN_ROOT}/sounds/question.mp3",
-      "keywords": ["api error", "401", "authentication", "login"]
+      "sound": "${CLAUDE_PLUGIN_ROOT}/sounds/question.mp3"
     },
     "api_error_overloaded": {
       "title": "🔴 API Error",
-      "sound": "${CLAUDE_PLUGIN_ROOT}/sounds/question.mp3",
-      "keywords": ["api error", "overloaded", "rate limit", "timeout", "server error", "529", "500"]
+      "sound": "${CLAUDE_PLUGIN_ROOT}/sounds/question.mp3"
     }
   }
 }
