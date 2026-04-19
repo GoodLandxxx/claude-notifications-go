@@ -667,6 +667,44 @@ func TestDiscordFormatter_NoGitBranch(t *testing.T) {
 	}
 }
 
+func TestDiscordFormatter_AuthorRespectsDiscordLimit(t *testing.T) {
+	formatter := &DiscordFormatter{}
+	longFolder := strings.Repeat("folder", 30)
+	longBranch := strings.Repeat("branch", 30)
+	ctx := SendContext{
+		Status:      analyzer.StatusTaskComplete,
+		Message:     "Done.",
+		SessionID:   "439d1884-b53d-42f2-922a-203d086a158d",
+		SessionName: "phoenix 439d1884",
+		Folder:      longFolder,
+		GitBranch:   longBranch,
+		RawBody:     "Done.",
+	}
+
+	result, err := formatter.Format(ctx, config.StatusInfo{Title: "✅"})
+	if err != nil {
+		t.Fatalf("Format: %v", err)
+	}
+
+	embed := result.(map[string]interface{})["embeds"].([]map[string]interface{})[0]
+	author := embed["author"].(map[string]interface{})
+	name := author["name"].(string)
+
+	if got := len([]rune(name)); got > discordEmbedAuthorLimit {
+		t.Fatalf("author.name length = %d, want <= %d", got, discordEmbedAuthorLimit)
+	}
+	if !strings.HasPrefix(name, "phoenix 439d1884") {
+		t.Errorf("author.name should preserve the prefix, got %q", name)
+	}
+	wantTail := (longBranch + ")")[len(longBranch+")")-20:]
+	if !strings.HasSuffix(name, wantTail) {
+		t.Errorf("author.name should preserve the tail, got %q", name)
+	}
+	if !strings.Contains(name, "...") {
+		t.Errorf("author.name should contain ellipsis when truncated, got %q", name)
+	}
+}
+
 func TestDiscordFormatter_NoActionSummaryOmitsFields(t *testing.T) {
 	formatter := &DiscordFormatter{}
 	ctx := SendContext{

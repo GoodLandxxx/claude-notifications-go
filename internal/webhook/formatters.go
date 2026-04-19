@@ -11,6 +11,11 @@ import (
 	"github.com/777genius/claude-notifications/internal/sessionname"
 )
 
+const (
+	discordEmbedAuthorLimit = 256
+	discordEmbedFooterLimit = 2048
+)
+
 // Formatter renders a SendContext into a preset-specific webhook payload.
 //
 // Implementations should treat ctx.Message as the pre-joined notification text
@@ -103,7 +108,7 @@ func buildDiscordAuthor(ctx SendContext) string {
 	if ctx.GitBranch != "" {
 		author += fmt.Sprintf(" (%s)", ctx.GitBranch)
 	}
-	return author
+	return truncateMiddle(author, discordEmbedAuthorLimit)
 }
 
 // buildDiscordFooter returns the embed footer text.
@@ -113,7 +118,29 @@ func buildDiscordFooter(ctx SendContext) string {
 	if ctx.SessionID == "" {
 		return "Claude Code"
 	}
-	return fmt.Sprintf("Session: %s · Claude Code", ctx.SessionID)
+	return truncateMiddle(fmt.Sprintf("Session: %s · Claude Code", ctx.SessionID), discordEmbedFooterLimit)
+}
+
+// truncateMiddle keeps both the start and end of a string visible while
+// enforcing a hard character limit for Discord embed fields.
+func truncateMiddle(s string, limit int) string {
+	runes := []rune(s)
+	if len(runes) <= limit || limit <= 0 {
+		return s
+	}
+	if limit == 1 {
+		return string(runes[:1])
+	}
+	if limit == 2 {
+		return ".."
+	}
+
+	const ellipsis = "..."
+	available := limit - len([]rune(ellipsis))
+	head := available / 2
+	tail := available - head
+
+	return string(runes[:head]) + ellipsis + string(runes[len(runes)-tail:])
 }
 
 // actionEmojiField maps the leading emoji of an action segment to a field name.
