@@ -108,7 +108,7 @@ type Config struct {
 1. Last tool = `ExitPlanMode` → `plan_ready`
 2. Last tool = `AskUserQuestion` → `question`
 3. `ExitPlanMode` exists + tools after → `task_complete`
-4. Only `Read`/`Grep`/`Glob` used + no ACTIVE tools + response >200 chars → `review_complete`
+4. At least one `Read`/`Grep`/`Glob` used + no ACTIVE tools + response >200 chars → `review_complete`
 5. Last tool in ACTIVE_TOOLS → `task_complete`
 6. Any tool usage (fallback) → `task_complete`
 7. No tools + `notifyOnTextResponse` enabled → `task_complete`
@@ -117,7 +117,7 @@ type Config struct {
 - **ACTIVE**: Write, Edit, Bash, NotebookEdit, SlashCommand, KillShell
 - **QUESTION**: AskUserQuestion
 - **PLANNING**: ExitPlanMode, TodoWrite
-- **PASSIVE**: Read, Grep, Glob, WebFetch, WebSearch, Task
+- **PASSIVE**: Read, Grep, Glob, WebFetch, WebSearch, Search, Fetch, Task
 
 ### 5. State Manager (`internal/state`)
 
