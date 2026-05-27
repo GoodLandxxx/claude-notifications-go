@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.39.2] - 2026-05-27
+
+### Fixed
+- **Windows: Stop hooks no longer corrupt non-ASCII JSON payloads** - Windows hook generation now uses direct exec-form `.exe` hooks with `args` instead of routing stdin through PowerShell/Git Bash shell pipelines, preventing locale-dependent JSON parse failures such as `invalid character '\r' in string literal` and `invalid character 'b' after object key:value pair` ([#87](https://github.com/777genius/claude-notifications-go/issues/87))
+- **Plugin hooks use argument-vector execution by default** - bundled hook configuration now passes wrapper arguments via `args`, and installer validation rejects Windows hook configs that still route through shell commands, wrappers, `.bat`/`.cmd` shims, or `$input` pipes
+
 ## [1.39.1] - 2026-05-10
 
 ### Fixed

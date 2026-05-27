@@ -562,7 +562,7 @@ check_existing() {
     if [ -f "$BINARY_PATH" ]; then
         if windows_native_hooks_update_required; then
             WINDOWS_NATIVE_HOOKS_NEED_UPDATE=true
-            echo -e "${YELLOW}⚠ Existing Windows binary cannot generate PowerShell hooks${NC}"
+            echo -e "${YELLOW}⚠ Existing Windows binary cannot generate exec-form hooks${NC}"
             echo -e "${YELLOW}  Updating ${BINARY_NAME} before rewriting hooks...${NC}"
             return 1
         fi
@@ -976,10 +976,21 @@ windows_native_hooks_json() {
     "$BINARY_PATH" windows-hooks --exe "$exe_path"
 }
 
+windows_native_hooks_are_exec_form() {
+    local hooks_json="$1"
+    printf '%s\n' "$hooks_json" | grep -qE '"args"[[:space:]]*:[[:space:]]*\[' &&
+        printf '%s\n' "$hooks_json" | grep -qE '"handle-hook"' &&
+        printf '%s\n' "$hooks_json" | grep -qE '"command"[[:space:]]*:[[:space:]]*"[^"]*claude-notifications-windows-[^"]*\.exe"' &&
+        ! printf '%s\n' "$hooks_json" | grep -qE '"shell"[[:space:]]*:' &&
+        ! printf '%s\n' "$hooks_json" | grep -qF '$input' &&
+        ! printf '%s\n' "$hooks_json" | grep -qE '"command"[[:space:]]*:[^\n]*\|' &&
+        ! printf '%s\n' "$hooks_json" | grep -qE '"command"[[:space:]]*:[^\n]*hook-wrapper'
+}
+
 windows_native_hooks_supported() {
     local hooks_json
     hooks_json="$(windows_native_hooks_json 2>/dev/null)" || return 1
-    printf '%s\n' "$hooks_json" | grep -qE '"shell"[[:space:]]*:[[:space:]]*"powershell"'
+    windows_native_hooks_are_exec_form "$hooks_json"
 }
 
 windows_native_hooks_update_required() {
@@ -1054,22 +1065,22 @@ configure_windows_native_hooks() {
 
     local hooks_json
     if ! hooks_json="$(windows_native_hooks_json 2>/dev/null)"; then
-        echo -e "${YELLOW}⚠ Could not generate Windows PowerShell hooks${NC}"
+        echo -e "${YELLOW}⚠ Could not generate Windows exec-form hooks${NC}"
         return 0
     fi
 
-    if ! printf '%s\n' "$hooks_json" | grep -qE '"shell"[[:space:]]*:[[:space:]]*"powershell"'; then
-        echo -e "${YELLOW}⚠ Generated Windows hooks did not include PowerShell shell setting${NC}"
+    if ! windows_native_hooks_are_exec_form "$hooks_json"; then
+        echo -e "${YELLOW}⚠ Generated Windows hooks did not use direct exe exec-form args${NC}"
         return 0
     fi
 
     local tmp_hooks="${hooks_path}.tmp.$$"
     if printf '%s\n' "$hooks_json" > "$tmp_hooks" 2>/dev/null && mv "$tmp_hooks" "$hooks_path" 2>/dev/null; then
-        echo -e "${GREEN}✓${NC} Windows PowerShell hooks configured"
+        echo -e "${GREEN}✓${NC} Windows exec-form hooks configured"
         echo -e "${YELLOW}  Restart Claude Code to apply the Windows hook update.${NC}"
     else
         rm -f "$tmp_hooks" 2>/dev/null || true
-        echo -e "${YELLOW}⚠ Could not write Windows PowerShell hooks${NC}"
+        echo -e "${YELLOW}⚠ Could not write Windows exec-form hooks${NC}"
     fi
 
     return 0
@@ -1626,7 +1637,7 @@ main() {
         echo -e "${YELLOW}Running in offline mode...${NC}"
 
         if [ "$WINDOWS_NATIVE_HOOKS_NEED_UPDATE" = true ]; then
-            echo -e "${RED}✗ Existing Windows binary is too old for PowerShell hooks${NC}" >&2
+            echo -e "${RED}✗ Existing Windows binary is too old for exec-form hooks${NC}" >&2
             echo -e "${YELLOW}Restore network access and rerun the installer to download a compatible binary.${NC}" >&2
             exit 1
         fi

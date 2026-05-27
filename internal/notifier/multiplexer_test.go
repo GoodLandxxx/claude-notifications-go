@@ -2,6 +2,7 @@ package notifier
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -48,7 +49,7 @@ func TestDetectMultiplexerArgs_TmuxPriority(t *testing.T) {
 	// When both TMUX and ZELLIJ are set, tmux should win (first in registry)
 	oldTmux := os.Getenv("TMUX")
 	oldZellij := os.Getenv("ZELLIJ")
-	os.Setenv("TMUX", "/tmp/tmux-test,12345,0")
+	os.Setenv("TMUX", filepath.Join(t.TempDir(), "missing.sock")+",12345,0")
 	os.Setenv("ZELLIJ", "0")
 	t.Cleanup(func() {
 		if oldTmux != "" {
