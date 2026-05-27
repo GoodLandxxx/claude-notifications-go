@@ -1,9 +1,11 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -85,19 +87,98 @@ func TestLazyUpdateQuoting(t *testing.T) {
 	}
 }
 
-func TestNewPowerShellHookSetsUTF8OutputEncoding(t *testing.T) {
-	hook := newPowerShellHook(`C:\Tools\claude-notifications.exe`, "Stop")
+func TestNewExecHookUsesArgsWithoutShell(t *testing.T) {
+	hook := newExecHook(`C:\Tools\claude-notifications.exe`, "Stop")
 
-	for _, want := range []string{
-		"$OutputEncoding = [System.Text.UTF8Encoding]::new($false)",
-		`$input | & "C:\Tools\claude-notifications.exe" handle-hook Stop`,
-	} {
-		if !strings.Contains(hook.Command, want) {
-			t.Fatalf("newPowerShellHook command = %q, want substring %q", hook.Command, want)
+	if hook.Command != `C:\Tools\claude-notifications.exe` {
+		t.Fatalf("newExecHook command = %q", hook.Command)
+	}
+	if want := []string{"handle-hook", "Stop"}; !reflect.DeepEqual(hook.Args, want) {
+		t.Fatalf("newExecHook args = %#v, want %#v", hook.Args, want)
+	}
+	if hook.Shell != "" {
+		t.Fatalf("newExecHook shell = %q, want empty", hook.Shell)
+	}
+}
+
+func TestWindowsHookSettingsUseExecFormForAllHooks(t *testing.T) {
+	settings := newWindowsHookSettings(`C:\Tools\claude-notifications-windows-amd64.exe`)
+	expected := map[string]string{
+		"PreToolUse":   "PreToolUse",
+		"Notification": "Notification",
+		"Stop":         "Stop",
+		"SubagentStop": "SubagentStop",
+		"TeammateIdle": "TeammateIdle",
+	}
+
+	for hookEvent, expectedArg := range expected {
+		groups := settings.Hooks[hookEvent]
+		if len(groups) != 1 {
+			t.Fatalf("%s groups = %d, want 1", hookEvent, len(groups))
+		}
+		if len(groups[0].Hooks) != 1 {
+			t.Fatalf("%s commands = %d, want 1", hookEvent, len(groups[0].Hooks))
+		}
+
+		hook := groups[0].Hooks[0]
+		if hook.Command != `C:\Tools\claude-notifications-windows-amd64.exe` {
+			t.Fatalf("%s command = %q", hookEvent, hook.Command)
+		}
+		if want := []string{"handle-hook", expectedArg}; !reflect.DeepEqual(hook.Args, want) {
+			t.Fatalf("%s args = %#v, want %#v", hookEvent, hook.Args, want)
+		}
+		if hook.Shell != "" {
+			t.Fatalf("%s shell = %q, want empty", hookEvent, hook.Shell)
+		}
+		if strings.Contains(hook.Command, "|") {
+			t.Fatalf("%s command contains shell pipe: %q", hookEvent, hook.Command)
 		}
 	}
-	if hook.Shell != "powershell" {
-		t.Fatalf("newPowerShellHook shell = %q, want powershell", hook.Shell)
+}
+
+func TestWindowsHookSettingsJSONHasNoShellSyntax(t *testing.T) {
+	data, err := json.Marshal(newWindowsHookSettings(`C:\Tools\claude-notifications-windows-amd64.exe`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	jsonText := string(data)
+	for _, forbidden := range []string{
+		`"shell"`,
+		"$input",
+		"powershell",
+		"hook-wrapper",
+		".bat",
+		".cmd",
+	} {
+		if strings.Contains(jsonText, forbidden) {
+			t.Fatalf("windows hooks JSON contains %q: %s", forbidden, jsonText)
+		}
+	}
+}
+
+func TestWindowsHookSettingsPreserveSpecialPathChars(t *testing.T) {
+	exePath := `C:\Users\O'Brien\A $pecial Dir\claude-notifications-windows-amd64.exe`
+	settings := newWindowsHookSettings(exePath)
+	hook := settings.Hooks["Stop"][0].Hooks[0]
+
+	if hook.Command != exePath {
+		t.Fatalf("command = %q, want %q", hook.Command, exePath)
+	}
+	if strings.Contains(hook.Command, "`") || strings.Contains(hook.Command, "\"") {
+		t.Fatalf("command should not be shell-quoted: %q", hook.Command)
+	}
+
+	data, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded hookSettings
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if got := decoded.Hooks["Stop"][0].Hooks[0].Command; got != exePath {
+		t.Fatalf("decoded command = %q, want %q", got, exePath)
 	}
 }
 

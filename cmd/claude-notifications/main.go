@@ -18,7 +18,7 @@ import (
 	"github.com/777genius/claude-notifications/internal/notifier"
 )
 
-const version = "1.39.1"
+const version = "1.39.2"
 const windowsLazyUpdateRetryAfter = time.Hour
 
 var (
@@ -92,10 +92,11 @@ type hookMatcherGroup struct {
 }
 
 type hookCommand struct {
-	Type    string `json:"type"`
-	Command string `json:"command"`
-	Timeout int    `json:"timeout"`
-	Shell   string `json:"shell"`
+	Type    string   `json:"type"`
+	Command string   `json:"command"`
+	Args    []string `json:"args,omitempty"`
+	Timeout int      `json:"timeout"`
+	Shell   string   `json:"shell,omitempty"`
 }
 
 func runWindowsHooks(args []string) {
@@ -105,37 +106,7 @@ func runWindowsHooks(args []string) {
 		os.Exit(1)
 	}
 
-	settings := hookSettings{
-		Hooks: map[string][]hookMatcherGroup{
-			"PreToolUse": {
-				{
-					Matcher: "ExitPlanMode|AskUserQuestion",
-					Hooks:   []hookCommand{newPowerShellHook(exePath, "PreToolUse")},
-				},
-			},
-			"Notification": {
-				{
-					Matcher: "permission_prompt",
-					Hooks:   []hookCommand{newPowerShellHook(exePath, "Notification")},
-				},
-			},
-			"Stop": {
-				{
-					Hooks: []hookCommand{newPowerShellHook(exePath, "Stop")},
-				},
-			},
-			"SubagentStop": {
-				{
-					Hooks: []hookCommand{newPowerShellHook(exePath, "SubagentStop")},
-				},
-			},
-			"TeammateIdle": {
-				{
-					Hooks: []hookCommand{newPowerShellHook(exePath, "TeammateIdle")},
-				},
-			},
-		},
-	}
+	settings := newWindowsHookSettings(exePath)
 
 	out, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
@@ -144,6 +115,40 @@ func runWindowsHooks(args []string) {
 	}
 
 	fmt.Println(string(out))
+}
+
+func newWindowsHookSettings(exePath string) hookSettings {
+	return hookSettings{
+		Hooks: map[string][]hookMatcherGroup{
+			"PreToolUse": {
+				{
+					Matcher: "ExitPlanMode|AskUserQuestion",
+					Hooks:   []hookCommand{newExecHook(exePath, "PreToolUse")},
+				},
+			},
+			"Notification": {
+				{
+					Matcher: "permission_prompt",
+					Hooks:   []hookCommand{newExecHook(exePath, "Notification")},
+				},
+			},
+			"Stop": {
+				{
+					Hooks: []hookCommand{newExecHook(exePath, "Stop")},
+				},
+			},
+			"SubagentStop": {
+				{
+					Hooks: []hookCommand{newExecHook(exePath, "SubagentStop")},
+				},
+			},
+			"TeammateIdle": {
+				{
+					Hooks: []hookCommand{newExecHook(exePath, "TeammateIdle")},
+				},
+			},
+		},
+	}
 }
 
 func parseWindowsHooksExecutable(args []string) (string, error) {
@@ -183,22 +188,13 @@ func parseWindowsHooksExecutable(args []string) (string, error) {
 	return filepath.Abs(filepath.Join(pluginRoot, "bin", "claude-notifications-windows-amd64.exe"))
 }
 
-func newPowerShellHook(exePath, hookName string) hookCommand {
+func newExecHook(exePath, hookName string) hookCommand {
 	return hookCommand{
 		Type:    "command",
-		Command: "$OutputEncoding = [System.Text.UTF8Encoding]::new($false); $input | & " + powershellDoubleQuoted(exePath) + " handle-hook " + hookName,
+		Command: exePath,
+		Args:    []string{"handle-hook", hookName},
 		Timeout: 30,
-		Shell:   "powershell",
 	}
-}
-
-func powershellDoubleQuoted(value string) string {
-	replacer := strings.NewReplacer(
-		"`", "``",
-		"$", "`$",
-		"\"", "`\"",
-	)
-	return `"` + replacer.Replace(value) + `"`
 }
 
 func handleHook(hookEvent string) {
@@ -518,7 +514,7 @@ func printUsage() {
 	fmt.Println("                          For click-to-focus support on desktop notifications")
 	fmt.Println("  focus-window <bundleID> <cwd> [--ghostty-terminal-id <id>]")
 	fmt.Println("                          Focus specific app window (internal, used by click-to-focus)")
-	fmt.Println("  windows-hooks           Print PowerShell hook JSON for Windows settings")
+	fmt.Println("  windows-hooks           Print exec-form hook JSON for Windows settings")
 	fmt.Println("                          Does not modify ~/.claude/settings.json")
 	fmt.Println("  version                 Show version information")
 	fmt.Println("  help                    Show this help message")
@@ -533,7 +529,7 @@ func printUsage() {
 	fmt.Println("  # Run notification daemon (Linux only, started automatically)")
 	fmt.Println("  claude-notifications daemon")
 	fmt.Println()
-	fmt.Println("  # Print Windows PowerShell hook configuration")
+	fmt.Println("  # Print Windows exec-form hook configuration")
 	fmt.Println("  claude-notifications windows-hooks")
 	fmt.Println()
 	fmt.Println("Environment Variables:")

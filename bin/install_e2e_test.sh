@@ -439,19 +439,32 @@ test_lock_created() {
 
     setup_test_dir
 
-    # Run install with unreachable URL to fail fast
-    RELEASE_URL="http://127.0.0.1:1" CHECKSUMS_URL="http://127.0.0.1:1/checksums.txt" \
-        INSTALL_TARGET_DIR="$TEST_DIR" run_with_timeout 10 bash "$INSTALL_SCRIPT" 2>&1 &
-    local pid=$!
-    sleep 1
+    local fake_bin="$TEST_DIR/fake-bin"
+    mkdir -p "$fake_bin"
+    cat > "$fake_bin/curl" <<'FAKE_CURL_EOF'
+#!/bin/sh
+if [ "$1" = "--help" ]; then
+    sleep 5
+fi
+exit 28
+FAKE_CURL_EOF
+    chmod +x "$fake_bin/curl"
 
-    # Check if lock was created (may be cleaned up already if failed quickly)
-    # This test is tricky - we verify lock mechanism works in other tests
+    PATH="$fake_bin:$PATH" RELEASE_URL="http://127.0.0.1:1" CHECKSUMS_URL="http://127.0.0.1:1/checksums.txt" \
+        INSTALL_TARGET_DIR="$TEST_DIR" run_with_timeout 10 bash "$INSTALL_SCRIPT" >/dev/null 2>&1 &
+    local pid=$!
+
+    local i=0
+    while [ $i -lt 20 ] && [ ! -d "$TEST_DIR/.install.lock" ]; do
+        sleep 0.1
+        i=$((i + 1))
+    done
+
+    assert_dir_exists "$TEST_DIR/.install.lock" "Lock created while install is running"
+
     kill $pid 2>/dev/null || true
     wait $pid 2>/dev/null || true
-
-    # Lock should be cleaned up after script exits
-    assert_dir_not_exists "$TEST_DIR/.install.lock" "Lock cleaned up after exit"
+    rm -rf "$TEST_DIR/.install.lock"
 
     cleanup_test_dir
 }
@@ -694,7 +707,7 @@ if [ "$1" = "windows-hooks" ]; then
         fi
         shift
     done
-    printf '{\n  "hooks": {\n    "Stop": [\n      {\n        "hooks": [\n          {\n            "type": "command",\n            "command": "$input | & \"%s\" handle-hook Stop",\n            "timeout": 30,\n            "shell": "powershell"\n          }\n        ]\n      }\n    ]\n  }\n}\n' "$exe"
+    printf '{\n  "hooks": {\n    "Stop": [\n      {\n        "hooks": [\n          {\n            "type": "command",\n            "command": "%s",\n            "args": ["handle-hook", "Stop"],\n            "timeout": 30\n          }\n        ]\n      }\n    ]\n  }\n}\n' "$exe"
     exit 0
 fi
 exit 0
@@ -710,12 +723,18 @@ FAKE_EXE_EOF
     exit_code=$?
 
     assert_exit_code 0 $exit_code "Installer succeeds with existing Windows binary"
-    assert_contains "$output" "Windows PowerShell hooks configured" "Windows hooks configuration message shown"
+    assert_contains "$output" "Windows exec-form hooks configured" "Windows hooks configuration message shown"
 
     local hooks_json
     hooks_json=$(cat "$hooks_dir/hooks.json")
-    assert_contains "$hooks_json" '"shell"[[:space:]]*:[[:space:]]*"powershell"' "hooks.json uses PowerShell shell"
-    assert_contains "$hooks_json" 'handle-hook Stop' "hooks.json calls Stop handler"
+    assert_contains "$hooks_json" '"args"[[:space:]]*:[[:space:]]*\[' "hooks.json uses exec-form args"
+    assert_not_contains "$hooks_json" '"shell"[[:space:]]*:' "hooks.json does not force a shell"
+    assert_not_contains "$hooks_json" '\$input' "hooks.json does not pipe stdin through a shell"
+    assert_not_contains "$hooks_json" '"command"[[:space:]]*:[^\n]*\|' "hooks.json commands do not contain shell pipes"
+    assert_not_contains "$hooks_json" 'hook-wrapper' "hooks.json bypasses shell wrapper on Windows"
+    assert_not_contains "$hooks_json" '\.bat|\.cmd' "hooks.json does not use Windows shell shims"
+    assert_contains "$hooks_json" '"handle-hook"' "hooks.json calls hook handler"
+    assert_contains "$hooks_json" '"Stop"' "hooks.json passes Stop event"
     assert_contains "$hooks_json" 'claude-notifications-windows-amd64\.exe' "hooks.json points at Windows exe"
 
     cleanup_test_dir
@@ -763,33 +782,127 @@ OLD_EXE_EOF
     set +e
 
     assert_exit_code 1 $exit_code "Old Windows binary does not complete setup silently"
-    assert_contains "$output" "cannot generate PowerShell hooks" "Installer detects old binary without windows-hooks"
+    assert_contains "$output" "cannot generate exec-form hooks" "Installer detects old binary without exec-form windows-hooks"
     assert_contains "$output" "Updating claude-notifications-windows-amd64.exe before rewriting hooks" "Installer chooses update path"
     assert_not_contains "$output" "Setup complete" "Installer does not report success with stale hooks"
 
     cleanup_test_dir
 }
 
-test_windows_native_hooks_real_powershell_launch() {
-    echo -e "\n${CYAN}▶ test_windows_native_hooks_real_powershell_launch${NC}"
+test_windows_wrapper_exec_form_forces_update_before_hooks() {
+    echo -e "\n${CYAN}▶ test_windows_wrapper_exec_form_forces_update_before_hooks${NC}"
+    setup_test_dir
+
+    local plugin_root="$TEST_DIR/plugin"
+    local bin_dir="$plugin_root/bin"
+    local hooks_dir="$plugin_root/hooks"
+    local fake_path="$TEST_DIR/fakebin"
+
+    mkdir -p "$bin_dir" "$hooks_dir" "$fake_path"
+    printf '{"hooks":{}}\n' > "$hooks_dir/hooks.json"
+
+    cat > "$fake_path/uname" <<'UNAME_EOF'
+#!/bin/sh
+case "$1" in
+  -s) echo "MINGW64_NT-10.0" ;;
+  -m) echo "x86_64" ;;
+  *) echo "MINGW64_NT-10.0" ;;
+esac
+UNAME_EOF
+    chmod +x "$fake_path/uname"
+
+    cat > "$bin_dir/claude-notifications-windows-amd64.exe" <<'WRAPPER_EXE_EOF'
+#!/bin/sh
+if [ "$1" = "--version" ] || [ "$1" = "version" ]; then
+    echo "claude-notifications v1.38.0"
+    exit 0
+fi
+if [ "$1" = "windows-hooks" ]; then
+    printf '{\n  "hooks": {\n    "Stop": [\n      {\n        "hooks": [\n          {\n            "type": "command",\n            "command": "${CLAUDE_PLUGIN_ROOT}/bin/hook-wrapper.sh",\n            "args": ["handle-hook", "Stop"],\n            "timeout": 30\n          }\n        ]\n      }\n    ]\n  }\n}\n'
+    exit 0
+fi
+exit 0
+WRAPPER_EXE_EOF
+    chmod +x "$bin_dir/claude-notifications-windows-amd64.exe"
+
+    local output exit_code
+    set +e
+    output=$(INSTALL_TARGET_DIR="$bin_dir" PATH="$fake_path:$PATH" SKIP_CONNECTIVITY_CHECK=true \
+        RELEASE_URL="file:///no-such-claude-notifications-release" CHECKSUMS_URL="file:///no-such-claude-notifications-release/checksums.txt" \
+        run_with_timeout 15 bash "$INSTALL_SCRIPT" 2>&1)
+    exit_code=$?
+    set +e
+
+    assert_exit_code 1 $exit_code "Wrapper exec-form Windows hooks do not complete setup silently"
+    assert_contains "$output" "cannot generate exec-form hooks" "Installer rejects wrapper-based exec-form hooks"
+    assert_contains "$output" "Updating claude-notifications-windows-amd64.exe before rewriting hooks" "Installer updates before writing direct exe hooks"
+    assert_not_contains "$output" "Setup complete" "Installer does not report success with wrapper hooks"
+
+    cleanup_test_dir
+}
+
+test_windows_sh_exec_form_forces_update_before_hooks() {
+    echo -e "\n${CYAN}▶ test_windows_sh_exec_form_forces_update_before_hooks${NC}"
+    setup_test_dir
+
+    local plugin_root="$TEST_DIR/plugin"
+    local bin_dir="$plugin_root/bin"
+    local hooks_dir="$plugin_root/hooks"
+    local fake_path="$TEST_DIR/fakebin"
+
+    mkdir -p "$bin_dir" "$hooks_dir" "$fake_path"
+    printf '{"hooks":{}}\n' > "$hooks_dir/hooks.json"
+
+    cat > "$fake_path/uname" <<'UNAME_EOF'
+#!/bin/sh
+case "$1" in
+  -s) echo "MINGW64_NT-10.0" ;;
+  -m) echo "x86_64" ;;
+  *) echo "MINGW64_NT-10.0" ;;
+esac
+UNAME_EOF
+    chmod +x "$fake_path/uname"
+
+    cat > "$bin_dir/claude-notifications-windows-amd64.exe" <<'SH_EXE_EOF'
+#!/bin/sh
+if [ "$1" = "--version" ] || [ "$1" = "version" ]; then
+    echo "claude-notifications v1.38.0"
+    exit 0
+fi
+if [ "$1" = "windows-hooks" ]; then
+    printf '{\n  "hooks": {\n    "Stop": [\n      {\n        "hooks": [\n          {\n            "type": "command",\n            "command": "sh",\n            "args": ["%s", "handle-hook", "Stop"],\n            "timeout": 30\n          }\n        ]\n      }\n    ]\n  }\n}\n' "$0"
+    exit 0
+fi
+exit 0
+SH_EXE_EOF
+    chmod +x "$bin_dir/claude-notifications-windows-amd64.exe"
+
+    local output exit_code
+    set +e
+    output=$(INSTALL_TARGET_DIR="$bin_dir" PATH="$fake_path:$PATH" SKIP_CONNECTIVITY_CHECK=true \
+        RELEASE_URL="file:///no-such-claude-notifications-release" CHECKSUMS_URL="file:///no-such-claude-notifications-release/checksums.txt" \
+        run_with_timeout 15 bash "$INSTALL_SCRIPT" 2>&1)
+    exit_code=$?
+    set +e
+
+    assert_exit_code 1 $exit_code "sh-mediated Windows hooks do not complete setup silently"
+    assert_contains "$output" "cannot generate exec-form hooks" "Installer rejects sh-mediated Windows hooks"
+    assert_contains "$output" "Updating claude-notifications-windows-amd64.exe before rewriting hooks" "Installer updates before writing direct exe hooks"
+    assert_not_contains "$output" "Setup complete" "Installer does not report success with sh-mediated hooks"
+
+    cleanup_test_dir
+}
+
+test_windows_native_hooks_real_exec_launch() {
+    echo -e "\n${CYAN}▶ test_windows_native_hooks_real_exec_launch${NC}"
 
     if ! is_windows; then
-        skip_test "Windows native PowerShell hook launch" "not on Windows"
+        skip_test "Windows native exec hook launch" "not on Windows"
         return
     fi
 
     if ! command -v go >/dev/null 2>&1; then
-        skip_test "Windows native PowerShell hook launch" "go not available"
-        return
-    fi
-
-    local ps_bin=""
-    if command -v powershell.exe >/dev/null 2>&1; then
-        ps_bin="powershell.exe"
-    elif command -v pwsh >/dev/null 2>&1; then
-        ps_bin="pwsh"
-    else
-        skip_test "Windows native PowerShell hook launch" "PowerShell not available"
+        skip_test "Windows native exec hook launch" "go not available"
         return
     fi
 
@@ -817,22 +930,21 @@ test_windows_native_hooks_real_powershell_launch() {
     exit_code=$?
 
     assert_exit_code 0 $exit_code "Installer succeeds with real Windows binary"
-    assert_contains "$output" "Windows PowerShell hooks configured" "Installer rewrites hooks for PowerShell"
+    assert_contains "$output" "Windows exec-form hooks configured" "Installer rewrites hooks for exec form"
 
     local hooks_json
     hooks_json=$(cat "$hooks_dir/hooks.json")
-    assert_contains "$hooks_json" '"shell"[[:space:]]*:[[:space:]]*"powershell"' "real hooks.json uses PowerShell shell"
-    assert_contains "$hooks_json" '\$OutputEncoding = \[System\.Text\.UTF8Encoding\]::new\(\$false\)' "real hooks.json sets PowerShell UTF-8 output encoding"
-    assert_contains "$hooks_json" 'handle-hook Stop' "real hooks.json contains Stop hook"
-
-    local exe_for_powershell="$exe_path"
-    if command -v cygpath >/dev/null 2>&1; then
-        exe_for_powershell="$(cygpath -w "$exe_path" 2>/dev/null || printf '%s' "$exe_path")"
-    fi
+    assert_contains "$hooks_json" '"args"[[:space:]]*:[[:space:]]*\[' "real hooks.json uses exec-form args"
+    assert_not_contains "$hooks_json" '"shell"[[:space:]]*:' "real hooks.json does not force a shell"
+    assert_not_contains "$hooks_json" '\$input' "real hooks.json does not pipe stdin through a shell"
+    assert_not_contains "$hooks_json" '"command"[[:space:]]*:[^\n]*\|' "real hooks.json commands do not contain shell pipes"
+    assert_not_contains "$hooks_json" 'hook-wrapper' "real hooks.json bypasses shell wrapper on Windows"
+    assert_not_contains "$hooks_json" '\.bat|\.cmd' "real hooks.json does not use Windows shell shims"
+    assert_contains "$hooks_json" '"handle-hook"' "real hooks.json calls hook handler"
+    assert_contains "$hooks_json" '"Stop"' "real hooks.json contains Stop hook"
 
     set +e
-    output=$(printf '{"session_id":"ci-win","transcript_path":"","cwd":""}\n' | \
-        "$ps_bin" -NoProfile -ExecutionPolicy Bypass -Command "\$OutputEncoding = [System.Text.UTF8Encoding]::new(\$false); \$input | & '$exe_for_powershell' handle-hook Stop" 2>&1)
+    output=$(printf '{"session_id":"ci-win","transcript_path":"","cwd":""}\n' | "$exe_path" handle-hook Stop 2>&1)
     exit_code=$?
     set +e
 
@@ -840,7 +952,7 @@ test_windows_native_hooks_real_powershell_launch() {
         echo "$output"
     fi
 
-    assert_exit_code 0 $exit_code "Generated PowerShell hook command launches real exe"
+    assert_exit_code 0 $exit_code "Generated exec-form hook command launches real exe"
 
     cleanup_test_dir
 }
@@ -858,12 +970,7 @@ test_windows_real_hook_schedules_lazy_update() {
         return
     fi
 
-    local ps_bin=""
-    if command -v powershell.exe >/dev/null 2>&1; then
-        ps_bin="powershell.exe"
-    elif command -v pwsh >/dev/null 2>&1; then
-        ps_bin="pwsh"
-    else
+    if ! command -v powershell.exe >/dev/null 2>&1; then
         skip_test "Windows real hook schedules lazy update" "PowerShell not available"
         return
     fi
@@ -911,19 +1018,20 @@ FAKE_BASH_GO_EOF
         return
     fi
 
-    local exe_for_powershell="$exe_path"
-    local fake_bash_for_powershell="$fake_bash"
-    local fake_bash_log_for_powershell="$fake_bash_log"
+    local fake_bash_for_windows="$fake_bash"
+    local fake_bash_log_for_windows="$fake_bash_log"
     if command -v cygpath >/dev/null 2>&1; then
-        exe_for_powershell="$(cygpath -w "$exe_path" 2>/dev/null || printf '%s' "$exe_path")"
-        fake_bash_for_powershell="$(cygpath -w "$fake_bash" 2>/dev/null || printf '%s' "$fake_bash")"
-        fake_bash_log_for_powershell="$(cygpath -w "$fake_bash_log" 2>/dev/null || printf '%s' "$fake_bash_log")"
+        fake_bash_for_windows="$(cygpath -w "$fake_bash" 2>/dev/null || printf '%s' "$fake_bash")"
+        fake_bash_log_for_windows="$(cygpath -w "$fake_bash_log" 2>/dev/null || printf '%s' "$fake_bash_log")"
     fi
 
     local output exit_code
     set +e
     output=$(printf '{"session_id":"ci-win","transcript_path":"","cwd":""}\n' | \
-        "$ps_bin" -NoProfile -ExecutionPolicy Bypass -Command "\$env:CLAUDE_NOTIFICATIONS_BASH = '$fake_bash_for_powershell'; \$env:FAKE_BASH_LOG = '$fake_bash_log_for_powershell'; \$env:CLAUDE_HOOK_JUDGE_MODE = 'true'; \$OutputEncoding = [System.Text.UTF8Encoding]::new(\$false); \$input | & '$exe_for_powershell' handle-hook Stop" 2>&1)
+        env CLAUDE_NOTIFICATIONS_BASH="$fake_bash_for_windows" \
+            FAKE_BASH_LOG="$fake_bash_log_for_windows" \
+            CLAUDE_HOOK_JUDGE_MODE=true \
+            "$exe_path" handle-hook Stop 2>&1)
     exit_code=$?
     set +e
 
@@ -2082,7 +2190,9 @@ main() {
         test_force_removes_symlinks
         test_windows_native_hooks_configured_existing_binary
         test_windows_old_binary_forces_update_before_hooks
-        test_windows_native_hooks_real_powershell_launch
+        test_windows_wrapper_exec_form_forces_update_before_hooks
+        test_windows_sh_exec_form_forces_update_before_hooks
+        test_windows_native_hooks_real_exec_launch
         test_windows_real_hook_schedules_lazy_update
         test_force_removes_apps_macos
     fi

@@ -2,6 +2,7 @@ package notifier
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -39,15 +40,24 @@ func TestGetTmuxPaneTarget_PrefersEnvVar(t *testing.T) {
 }
 
 func TestGetTmuxPaneTarget_FallsBackWithoutEnvVar(t *testing.T) {
-	old := os.Getenv("TMUX_PANE")
+	oldPane := os.Getenv("TMUX_PANE")
+	oldTmux := os.Getenv("TMUX")
 	os.Unsetenv("TMUX_PANE")
+	os.Setenv("TMUX", filepath.Join(t.TempDir(), "missing.sock")+",12345,0")
 	t.Cleanup(func() {
-		if old != "" {
-			os.Setenv("TMUX_PANE", old)
+		if oldPane != "" {
+			os.Setenv("TMUX_PANE", oldPane)
+		} else {
+			os.Unsetenv("TMUX_PANE")
+		}
+		if oldTmux != "" {
+			os.Setenv("TMUX", oldTmux)
+		} else {
+			os.Unsetenv("TMUX")
 		}
 	})
 
-	// Without $TMUX_PANE and without a real tmux server, the fallback
+	// Without $TMUX_PANE and without a real tmux socket, the fallback
 	// should fail gracefully.
 	_, err := GetTmuxPaneTarget()
 	if err == nil {
@@ -56,13 +66,20 @@ func TestGetTmuxPaneTarget_FallsBackWithoutEnvVar(t *testing.T) {
 }
 
 func TestGetTmuxPaneTarget_IgnoresEmptyEnvVar(t *testing.T) {
-	old := os.Getenv("TMUX_PANE")
+	oldPane := os.Getenv("TMUX_PANE")
+	oldTmux := os.Getenv("TMUX")
 	os.Setenv("TMUX_PANE", "")
+	os.Setenv("TMUX", filepath.Join(t.TempDir(), "missing.sock")+",12345,0")
 	t.Cleanup(func() {
-		if old != "" {
-			os.Setenv("TMUX_PANE", old)
+		if oldPane != "" {
+			os.Setenv("TMUX_PANE", oldPane)
 		} else {
 			os.Unsetenv("TMUX_PANE")
+		}
+		if oldTmux != "" {
+			os.Setenv("TMUX", oldTmux)
+		} else {
+			os.Unsetenv("TMUX")
 		}
 	})
 
