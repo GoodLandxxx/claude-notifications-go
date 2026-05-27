@@ -37,26 +37,31 @@ func NewClient() (*Client, error) {
 // SendNotification sends a notification request to the daemon.
 // focusFolder is the project folder name for window-specific focus (may be empty).
 // focusWindowID and focusWindowTitle are optional exact window hints captured in the hook process.
+// wezTermPaneID and wezTermSocket are WezTerm-specific hints for tab-level focus (may be empty).
 func (c *Client) SendNotification(
 	title,
 	body,
 	focusTarget,
 	focusFolder,
 	focusWindowID,
-	focusWindowTitle string,
+	focusWindowTitle,
+	wezTermPaneID,
+	wezTermSocket string,
 	timeout int,
 ) (*NotifyResponse, error) {
 	req := Request{
 		Type:    MessageTypeNotify,
 		Version: ProtocolVersion,
 		Notify: &NotifyRequest{
-			Title:            title,
-			Body:             body,
-			FocusTarget:      focusTarget,
-			FocusFolder:      focusFolder,
-			FocusWindowID:    focusWindowID,
-			FocusWindowTitle: focusWindowTitle,
-			Timeout:          timeout,
+			Title:              title,
+			Body:               body,
+			FocusTarget:        focusTarget,
+			FocusFolder:        focusFolder,
+			FocusWindowID:      focusWindowID,
+			FocusWindowTitle:   focusWindowTitle,
+			FocusWezTermPaneID: wezTermPaneID,
+			FocusWezTermSocket: wezTermSocket,
+			Timeout:            timeout,
 		},
 	}
 

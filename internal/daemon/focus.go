@@ -35,17 +35,25 @@ func GetFocusMethods() []FocusMethod {
 // folderName is the project folder name used for title-based window search (may be empty).
 // It tries each method in order until one succeeds.
 func TryFocus(terminalName, folderName string) error {
-	return TryFocusWithHints(terminalName, folderName, "", "")
+	return TryFocusWithHints(terminalName, folderName, "", "", "", "")
 }
 
 // TryFocusWithWindowID preserves the previous API for callers that only have an exact X11 window ID.
 func TryFocusWithWindowID(terminalName, folderName, windowID string) error {
-	return TryFocusWithHints(terminalName, folderName, windowID, "")
+	return TryFocusWithHints(terminalName, folderName, windowID, "", "", "")
 }
 
 // TryFocusWithHints attempts exact focus using hook-time hints first, then falls back to
 // compositor-specific methods.
-func TryFocusWithHints(terminalName, folderName, windowID, windowTitle string) error {
+// wezTermPaneID and wezTermSocket enable tab-level focus for WezTerm.
+func TryFocusWithHints(terminalName, folderName, windowID, windowTitle, wezTermPaneID, wezTermSocket string) error {
+	// WezTerm pane focus: highest priority — switches to the exact tab.
+	if strings.TrimSpace(wezTermPaneID) != "" {
+		if err := TryWezTermPane(wezTermPaneID, wezTermSocket); err == nil {
+			return nil
+		}
+	}
+
 	var exactErr error
 	if strings.TrimSpace(windowID) != "" {
 		if err := tryX11WindowID(windowID); err == nil {
@@ -82,6 +90,26 @@ func TryFocusWithHints(terminalName, folderName, windowID, windowTitle string) e
 		return exactErr
 	}
 	return fmt.Errorf("all focus methods failed, last error: %v", lastErr)
+}
+
+// TryWezTermPane activates a specific WezTerm pane by ID using the WezTerm CLI.
+// This switches to the exact tab/pane where Claude is running.
+func TryWezTermPane(paneID, socketPath string) error {
+	if _, err := exec.LookPath("wezterm"); err != nil {
+		return fmt.Errorf("wezterm not installed")
+	}
+
+	args := []string{"cli", "activate-pane", "--pane-id", paneID}
+	if strings.TrimSpace(socketPath) != "" {
+		args = append(args, "--unix-socket", socketPath)
+	}
+
+	cmd := exec.Command("wezterm", args...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("wezterm cli activate-pane failed: %w, output: %s", err, strings.TrimSpace(string(output)))
+	}
+	return nil
 }
 
 func tryX11WindowID(windowID string) error {

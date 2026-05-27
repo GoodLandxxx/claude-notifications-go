@@ -290,3 +290,13 @@ func getTerminatorWindowTitle() string {
 
 	return strings.TrimSpace(string(output))
 }
+
+// GetWezTermPaneID returns the WezTerm pane ID from the environment.
+func GetWezTermPaneID() string {
+	return strings.TrimSpace(os.Getenv("WEZTERM_PANE"))
+}
+
+// GetWezTermSocketPath returns the WezTerm Unix socket path from the environment.
+func GetWezTermSocketPath() string {
+	return strings.TrimSpace(os.Getenv("WEZTERM_UNIX_SOCKET"))
+}
