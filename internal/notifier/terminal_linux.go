@@ -93,9 +93,8 @@ func sendViaDaemon(title, body, cwd string) error {
 		focusWindowID = ""
 	}
 
-	// Capture WezTerm pane info for tab-level focus.
-	wezTermPaneID := daemon.GetWezTermPaneID()
-	wezTermSocket := daemon.GetWezTermSocketPath()
+	// Capture WezTerm pane info only when the focus target is actually WezTerm.
+	wezTermPaneID, wezTermSocket := daemon.GetWezTermFocusHints(focusTarget)
 
 	_, err = client.SendNotification(title, body, focusTarget, folderName, focusWindowID, focusWindowTitle, wezTermPaneID, wezTermSocket, 30)
 	return err

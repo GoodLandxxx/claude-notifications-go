@@ -21,6 +21,8 @@ func saveTerminalEnv(t *testing.T) func() {
 		"XDG_SESSION_TYPE",
 		"XDG_CURRENT_DESKTOP",
 		"XDG_SESSION_DESKTOP",
+		"WEZTERM_PANE",
+		"WEZTERM_UNIX_SOCKET",
 	}
 	type envState struct {
 		value string
@@ -594,6 +596,66 @@ func TestGetExactWindowTitle_UnknownTerminal(t *testing.T) {
 
 	if got := GetExactWindowTitle("kitty"); got != "" {
 		t.Errorf("GetExactWindowTitle(unknown) = %q, want empty string", got)
+	}
+}
+
+func TestIsWezTermTerminalName(t *testing.T) {
+	tests := []struct {
+		name string
+		want bool
+	}{
+		{"wezterm", true},
+		{"WezTerm", true},
+		{"wezterm-gui", true},
+		{"org.wezfurlong.wezterm", true},
+		{"org.wezfurlong.wezterm.desktop", true},
+		{"com.github.wez.wezterm", true},
+		{"code", false},
+		{"kitty", false},
+		{"Terminal", false},
+		{"", false},
+	}
+
+	for _, tt := range tests {
+		if got := IsWezTermTerminalName(tt.name); got != tt.want {
+			t.Errorf("IsWezTermTerminalName(%q) = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+}
+
+func TestGetWezTermFocusHints_WezTermTarget(t *testing.T) {
+	restore := saveTerminalEnv(t)
+	defer restore()
+
+	t.Setenv("WEZTERM_PANE", " 42 ")
+	t.Setenv("WEZTERM_UNIX_SOCKET", " /tmp/wezterm.sock ")
+
+	paneID, socketPath := GetWezTermFocusHints("WezTerm")
+	if paneID != "42" {
+		t.Errorf("paneID = %q, want %q", paneID, "42")
+	}
+	if socketPath != "/tmp/wezterm.sock" {
+		t.Errorf("socketPath = %q, want %q", socketPath, "/tmp/wezterm.sock")
+	}
+}
+
+func TestGetWezTermFocusHints_NonWezTermIgnoresInheritedEnv(t *testing.T) {
+	restore := saveTerminalEnv(t)
+	defer restore()
+
+	t.Setenv("WEZTERM_PANE", "42")
+	t.Setenv("WEZTERM_UNIX_SOCKET", "/tmp/wezterm.sock")
+
+	paneID, socketPath := GetWezTermFocusHints("code")
+	if paneID != "" || socketPath != "" {
+		t.Errorf("GetWezTermFocusHints(code) = (%q, %q), want empty hints", paneID, socketPath)
+	}
+}
+
+func TestNormalizeWezTermFocusHints_NonWezTermIgnoresExplicitHints(t *testing.T) {
+	paneID, socketPath := normalizeWezTermFocusHints("kitty", "42", "/tmp/wezterm.sock")
+	if paneID != "" || socketPath != "" {
+		t.Errorf("normalizeWezTermFocusHints(kitty) = (%q, %q), want empty hints", paneID, socketPath)
 	}
 }
 

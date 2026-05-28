@@ -57,7 +57,7 @@ func TryFocusWithWindowID(terminalName, folderName, windowID string) error {
 // If all window-level methods fail but a pane ID is available, TryWezTermPane is tried
 // as a last resort (activate-pane also raises the window on WezTerm).
 func TryFocusWithHints(terminalName, folderName, windowID, windowTitle, wezTermPaneID, wezTermSocket string) error {
-	wezTermPaneID = strings.TrimSpace(wezTermPaneID)
+	wezTermPaneID, wezTermSocket = normalizeWezTermFocusHints(terminalName, wezTermPaneID, wezTermSocket)
 	windowFocused := false
 	var exactErr, lastErr error
 

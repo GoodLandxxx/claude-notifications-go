@@ -300,3 +300,27 @@ func GetWezTermPaneID() string {
 func GetWezTermSocketPath() string {
 	return strings.TrimSpace(os.Getenv("WEZTERM_UNIX_SOCKET"))
 }
+
+// IsWezTermTerminalName reports whether terminalName identifies WezTerm.
+func IsWezTermTerminalName(terminalName string) bool {
+	switch strings.ToLower(strings.TrimSpace(terminalName)) {
+	case "wezterm", "wezterm-gui", "org.wezfurlong.wezterm", "org.wezfurlong.wezterm.desktop", "com.github.wez.wezterm":
+		return true
+	default:
+		return false
+	}
+}
+
+// GetWezTermFocusHints returns WezTerm-specific focus hints only when the
+// detected focus target is WezTerm. WEZTERM_* variables are often inherited by
+// GUI apps launched from WezTerm, so they must not be trusted for other targets.
+func GetWezTermFocusHints(terminalName string) (paneID, socketPath string) {
+	return normalizeWezTermFocusHints(terminalName, GetWezTermPaneID(), GetWezTermSocketPath())
+}
+
+func normalizeWezTermFocusHints(terminalName, paneID, socketPath string) (string, string) {
+	if !IsWezTermTerminalName(terminalName) {
+		return "", ""
+	}
+	return strings.TrimSpace(paneID), strings.TrimSpace(socketPath)
+}
