@@ -118,4 +118,27 @@ If the Python API is not available, the plugin falls back to standard `tmux sele
 
 ## Windows
 
-Notifications only, no click-to-focus.
+Click-to-focus on Windows uses Protocol Activation with the Windows Runtime Toast API.
+
+### Supported Terminals
+
+| Terminal | Focus method |
+|----------|-------------|
+| Windows Terminal | Precise tab focus via UI Automation + `wt.exe focus-tab`, falls back to window-level `SetForegroundWindow` |
+| Other terminals | Window title matching via `EnumWindows` + `SetForegroundWindow` |
+
+### First-time Setup
+
+The first time a notification is sent with click-to-focus enabled, the plugin registers a custom URL protocol (`claude-notif://`) in your user registry (`HKCU`). This requires **no administrator privileges**.
+
+### Requirements
+
+- Windows 10 or later
+- Windows Terminal (for precise tab focus)
+- PowerShell with .NET Framework (for UI Automation; included in Windows 10/11)
+
+### Limitations
+
+- Precise tab focus requires Windows Terminal and `wt.exe` in your PATH
+- If Windows Terminal is not detected, falls back to window title matching
+- In rare cases where the COM API is unavailable, go-toast falls back to PowerShell for toast delivery. In this mode, Protocol Activation is unavailable and click-to-focus will not work.

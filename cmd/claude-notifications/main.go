@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -63,6 +64,17 @@ func main() {
 		}
 		if err := notifier.FocusAppWindowWithOptions(os.Args[2], os.Args[3], opts); err != nil {
 			fmt.Fprintf(os.Stderr, "focus-window: %v\n", err)
+			os.Exit(1)
+		}
+	case "focus-windows":
+		if len(os.Args) < 3 {
+			fmt.Fprintf(os.Stderr, "Error: focus-windows requires a cwd or protocol URI argument\n")
+			printUsage()
+			os.Exit(1)
+		}
+		cwd := notifier.ParseFocusWindowsArg(os.Args[2])
+		if err := notifier.FocusWindowsTerminal(cwd); err != nil {
+			fmt.Fprintf(os.Stderr, "focus-windows: %v\n", err)
 			os.Exit(1)
 		}
 	case "play-sound":
@@ -514,6 +526,8 @@ func printUsage() {
 	fmt.Println("                          For click-to-focus support on desktop notifications")
 	fmt.Println("  focus-window <bundleID> <cwd> [--ghostty-terminal-id <id>]")
 	fmt.Println("                          Focus specific app window (internal, used by click-to-focus)")
+	fmt.Println("  focus-windows <cwd>       Focus Windows Terminal window/tab (Windows only)")
+	fmt.Println("                              Used internally by click-to-focus Protocol Activation")
 	fmt.Println("  windows-hooks           Print exec-form hook JSON for Windows settings")
 	fmt.Println("                          Does not modify ~/.claude/settings.json")
 	fmt.Println("  version                 Show version information")
