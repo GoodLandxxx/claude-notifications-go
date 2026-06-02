@@ -88,3 +88,7 @@ build/
 .augment/rules/byterover-rules.md
 
 .build/
+
+# Development docs (not for upstream)
+docs/superpowers/
+CLAUDE.md
