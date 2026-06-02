@@ -1,0 +1,270 @@
+//go:build windows
+
+package notifier
+
+import (
+	"fmt"
+	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
+	"unsafe"
+
+	"github.com/777genius/claude-notifications/internal/logging"
+	"golang.org/x/sys/windows"
+)
+
+var (
+	user32                       = windows.NewLazySystemDLL("user32.dll")
+	procEnumWindows              = user32.NewProc("EnumWindows")
+	procGetWindowTextW           = user32.NewProc("GetWindowTextW")
+	procGetWindowThreadProcessId = user32.NewProc("GetWindowThreadProcessId")
+	procShowWindow               = user32.NewProc("ShowWindow")
+	procSetForegroundWindow      = user32.NewProc("SetForegroundWindow")
+	procIsWindowVisible          = user32.NewProc("IsWindowVisible")
+)
+
+// FocusWindowsTerminal focuses the Windows Terminal window matching cwd,
+// and attempts precise tab focus via wt.exe.
+func FocusWindowsTerminal(cwd string) error {
+	if cwd == "" {
+		return fmt.Errorf("cwd is empty")
+	}
+
+	// Step 1: Find Windows Terminal PID via process tree
+	wtPID, err := findWindowsTerminalPID()
+	if err != nil {
+		logging.Debug("Could not find Windows Terminal via process tree: %v", err)
+		// Fallback: EnumWindows + title matching
+		hwnd, found := findWindowByTitle(filepath.Base(cwd))
+		if !found {
+			return fmt.Errorf("Windows Terminal window not found for %s", cwd)
+		}
+		raiseWindow(hwnd)
+		return nil
+	}
+
+	// Step 2: Get current tab index via UI Automation
+	tabIdx, err := getCurrentTabIndex(wtPID)
+	if err == nil && tabIdx >= 0 {
+		// Step 3: Focus tab via wt.exe
+		if err := focusTab(tabIdx); err != nil {
+			logging.Debug("wt.exe focus-tab failed: %v", err)
+		}
+	} else {
+		logging.Debug("Could not get current tab index: %v", err)
+	}
+
+	// Step 4: Raise window via Win32 API
+	hwnd, found := findWindowByPID(wtPID)
+	if found {
+		raiseWindow(hwnd)
+	}
+
+	return nil
+}
+
+// findWindowsTerminalPID walks the process tree from current process up to
+// WindowsTerminal.exe. Returns the PID of the Windows Terminal process.
+func findWindowsTerminalPID() (int, error) {
+	currentPID := os.Getpid()
+	for i := 0; i < 20; i++ { // safety limit
+		parentPID, err := getParentProcessID(currentPID)
+		if err != nil {
+			return 0, err
+		}
+		if parentPID == 0 {
+			return 0, fmt.Errorf("reached root process without finding WindowsTerminal")
+		}
+		name, err := getProcessName(parentPID)
+		if err != nil {
+			// continue walking
+		} else if strings.EqualFold(name, "WindowsTerminal.exe") {
+			return parentPID, nil
+		}
+		currentPID = parentPID
+	}
+	return 0, fmt.Errorf("process tree depth exceeded")
+}
+
+// getParentProcessID returns the parent PID of the given process using
+// CreateToolhelp32Snapshot.
+func getParentProcessID(pid int) (int, error) {
+	snapshot, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
+	if err != nil {
+		return 0, err
+	}
+	defer windows.CloseHandle(snapshot)
+
+	var entry windows.ProcessEntry32
+	entry.Size = uint32(unsafe.Sizeof(entry))
+
+	if err := windows.Process32First(snapshot, &entry); err != nil {
+		return 0, err
+	}
+
+	for {
+		if int(entry.ProcessID) == pid {
+			return int(entry.ParentProcessID), nil
+		}
+		if err := windows.Process32Next(snapshot, &entry); err != nil {
+			break
+		}
+	}
+	return 0, fmt.Errorf("process %d not found", pid)
+}
+
+// getProcessName returns the executable name of the given PID using
+// CreateToolhelp32Snapshot.
+func getProcessName(pid int) (string, error) {
+	snapshot, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
+	if err != nil {
+		return "", err
+	}
+	defer windows.CloseHandle(snapshot)
+
+	var entry windows.ProcessEntry32
+	entry.Size = uint32(unsafe.Sizeof(entry))
+
+	if err := windows.Process32First(snapshot, &entry); err != nil {
+		return "", err
+	}
+
+	for {
+		if int(entry.ProcessID) == pid {
+			return windows.UTF16PtrToString(&entry.ExeFile[0]), nil
+		}
+		if err := windows.Process32Next(snapshot, &entry); err != nil {
+			break
+		}
+	}
+	return "", fmt.Errorf("process %d not found", pid)
+}
+
+// findWindowByPID finds the first visible window owned by the given PID.
+func findWindowByPID(pid int) (syscall.Handle, bool) {
+	var targetHwnd syscall.Handle
+	cb := syscall.NewCallback(func(hwnd syscall.Handle, lParam uintptr) uintptr {
+		if targetHwnd != 0 {
+			return 1 // already found
+		}
+		var winPID uint32
+		procGetWindowThreadProcessId.Call(uintptr(hwnd), uintptr(unsafe.Pointer(&winPID)))
+		if int(winPID) == pid {
+			// Check visibility
+			visible, _, _ := procIsWindowVisible.Call(uintptr(hwnd))
+			if visible != 0 {
+				targetHwnd = hwnd
+				return 0 // stop enumeration
+			}
+		}
+		return 1 // continue
+	})
+	procEnumWindows.Call(cb, 0)
+	return targetHwnd, targetHwnd != 0
+}
+
+// findWindowByTitle finds a visible window whose title contains the folder name.
+func findWindowByTitle(folderName string) (syscall.Handle, bool) {
+	var targetHwnd syscall.Handle
+	cb := syscall.NewCallback(func(hwnd syscall.Handle, lParam uintptr) uintptr {
+		if targetHwnd != 0 {
+			return 1
+		}
+		visible, _, _ := procIsWindowVisible.Call(uintptr(hwnd))
+		if visible == 0 {
+			return 1
+		}
+		var buf [512]uint16
+		procGetWindowTextW.Call(uintptr(hwnd), uintptr(unsafe.Pointer(&buf[0])), 512)
+		title := windows.UTF16PtrToString(&buf[0])
+		if strings.Contains(title, folderName) {
+			targetHwnd = hwnd
+			return 0
+		}
+		return 1
+	})
+	procEnumWindows.Call(cb, 0)
+	return targetHwnd, targetHwnd != 0
+}
+
+// raiseWindow restores and raises the window to foreground.
+func raiseWindow(hwnd syscall.Handle) {
+	procShowWindow.Call(uintptr(hwnd), 9) // SW_RESTORE
+	procSetForegroundWindow.Call(uintptr(hwnd))
+}
+
+// getCurrentTabIndex uses PowerShell UI Automation to find the selected tab index.
+func getCurrentTabIndex(wtPID int) (int, error) {
+	script := fmt.Sprintf(`
+Add-Type -AssemblyName UIAutomationClient
+$condition = [System.Windows.Automation.PropertyCondition]::new(
+    [System.Windows.Automation.AutomationElement]::ProcessIdProperty, %d)
+$wt = [System.Windows.Automation.AutomationElement]::RootElement.FindFirst(
+    [System.Windows.Automation.TreeScope]::Children, $condition)
+if (-not $wt) { exit 1 }
+$tabCondition = [System.Windows.Automation.PropertyCondition]::new(
+    [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+    [System.Windows.Automation.ControlType]::TabItem)
+$tabs = $wt.FindAll([System.Windows.Automation.TreeScope]::Descendants, $tabCondition)
+$prop = [System.Windows.Automation.SelectionItemPattern]::IsSelectedProperty
+for ($i = 0; $i -lt $tabs.Count; $i++) {
+    if ($tabs[$i].GetCurrentPropertyValue($prop) -eq $true) {
+        Write-Output $i
+        exit 0
+    }
+}
+exit 1
+`, wtPID)
+
+	cmd := exec.Command("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script)
+	out, err := cmd.Output()
+	if err != nil {
+		return -1, fmt.Errorf("UI Automation script failed: %w", err)
+	}
+
+	idx, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil {
+		return -1, fmt.Errorf("failed to parse tab index: %w", err)
+	}
+	return idx, nil
+}
+
+// focusTab invokes wt.exe to focus the specified tab index.
+func focusTab(index int) error {
+	cmd := exec.Command("wt.exe", "focus-tab", "--target", strconv.Itoa(index))
+	if err := cmd.Run(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ParseFocusWindowsArg extracts the cwd from a Protocol Activation URI
+// or returns the plain string if it's not a URI.
+func ParseFocusWindowsArg(arg string) string {
+	if !strings.HasPrefix(arg, "claude-notif://") {
+		return arg
+	}
+	u, err := url.Parse(arg)
+	if err != nil {
+		return arg
+	}
+	cwd := u.Query().Get("cwd")
+	if cwd == "" {
+		return arg
+	}
+	return cwd
+}
+
+// FocusAppWindowWithOptions implements the cross-platform focus interface for Windows.
+func FocusAppWindowWithOptions(bundleID, cwd string, opts FocusWindowOptions) error {
+	return FocusWindowsTerminal(cwd)
+}
+
+// FocusAppWindow is a convenience wrapper.
+func FocusAppWindow(bundleID, cwd string) error {
+	return FocusWindowsTerminal(cwd)
+}
