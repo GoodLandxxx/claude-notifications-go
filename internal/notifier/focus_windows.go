@@ -259,6 +259,12 @@ func ParseFocusWindowsArg(arg string) string {
 	return cwd
 }
 
+// FocusWindowOptions holds optional parameters for window focus.
+// Defined on Windows for cross-platform interface compatibility.
+type FocusWindowOptions struct {
+	GhosttyTerminalID string
+}
+
 // FocusAppWindowWithOptions implements the cross-platform focus interface for Windows.
 func FocusAppWindowWithOptions(bundleID, cwd string, opts FocusWindowOptions) error {
 	return FocusWindowsTerminal(cwd)
