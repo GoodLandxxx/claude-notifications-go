@@ -25,6 +25,8 @@ var (
 	procShowWindow               = user32.NewProc("ShowWindow")
 	procSetForegroundWindow      = user32.NewProc("SetForegroundWindow")
 	procIsWindowVisible          = user32.NewProc("IsWindowVisible")
+	procGetForegroundWindow      = user32.NewProc("GetForegroundWindow")
+	procAttachThreadInput        = user32.NewProc("AttachThreadInput")
 )
 
 // FocusWindowsTerminal focuses the Windows Terminal window matching cwd,
@@ -208,9 +210,28 @@ func findWindowByTitle(folderName string) (syscall.Handle, bool) {
 }
 
 // raiseWindow restores and raises the window to foreground.
+// Uses AttachThreadInput to bypass the foreground-window restriction.
 func raiseWindow(hwnd syscall.Handle) {
 	procShowWindow.Call(uintptr(hwnd), 9) // SW_RESTORE
+
+	// Get target window thread
+	targetTID, _, _ := procGetWindowThreadProcessId.Call(uintptr(hwnd), 0)
+
+	// Get current foreground window thread
+	fgHwnd, _, _ := procGetForegroundWindow.Call()
+	fgTID, _, _ := procGetWindowThreadProcessId.Call(fgHwnd, 0)
+
+	// Attach threads so SetForegroundWindow works
+	if targetTID != fgTID {
+		procAttachThreadInput.Call(fgTID, targetTID, 1)
+	}
+
 	procSetForegroundWindow.Call(uintptr(hwnd))
+
+	// Detach threads
+	if targetTID != fgTID {
+		procAttachThreadInput.Call(fgTID, targetTID, 0)
+	}
 }
 
 // getCurrentTabIndex uses PowerShell UI Automation to find the selected tab index.
