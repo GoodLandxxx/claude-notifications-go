@@ -24,6 +24,16 @@ func sendWindowsNotification(title, body, cwd string) error {
 		return beeep.Notify(title, body, "")
 	}
 
+	// Capture Windows Terminal PID now (while we're still in the hook process
+	// tree) so the click-to-focus handler can find the window later.
+	if wtPID, err := findWindowsTerminalPID(); err == nil && wtPID > 0 {
+		if saveErr := saveTerminalPID(wtPID); saveErr != nil {
+			logging.Debug("Could not save terminal PID: %v", saveErr)
+		}
+	} else {
+		logging.Debug("Could not find Windows Terminal for PID save: %v", err)
+	}
+
 	// go-toast's Windows Runtime COM API fails to parse XML containing emoji
 	// characters (supplementary plane runes). Strip them while preserving CJK.
 	cleanTitle := stripEmoji(title)

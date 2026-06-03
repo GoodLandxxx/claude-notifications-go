@@ -34,17 +34,32 @@ func FocusWindowsTerminal(cwd string) error {
 		return fmt.Errorf("cwd is empty")
 	}
 
-	// Step 1: Find Windows Terminal PID via process tree
-	wtPID, err := findWindowsTerminalPID()
-	if err != nil {
-		logging.Debug("Could not find Windows Terminal via process tree: %v", err)
-		// Fallback: EnumWindows + title matching
-		hwnd, found := findWindowByTitle(filepath.Base(cwd))
-		if !found {
-			return fmt.Errorf("Windows Terminal window not found for %s", cwd)
+	// Step 1: Find Windows Terminal PID.
+	// When invoked from a notification click, the process tree no longer
+	// connects to the originating terminal. Try the saved PID first.
+	var wtPID int
+	savedPID, err := loadSavedTerminalPID()
+	if err == nil && savedPID > 0 {
+		// Validate the saved PID still exists and is WindowsTerminal
+		if name, _ := getProcessName(savedPID); strings.EqualFold(name, "WindowsTerminal.exe") {
+			wtPID = savedPID
+			logging.Debug("Using saved Windows Terminal PID: %d", wtPID)
 		}
-		raiseWindow(hwnd)
-		return nil
+	}
+
+	if wtPID == 0 {
+		// Fallback: walk process tree (works when invoked from hook context)
+		wtPID, err = findWindowsTerminalPID()
+		if err != nil {
+			logging.Debug("Could not find Windows Terminal via process tree: %v", err)
+			// Final fallback: EnumWindows + title matching
+			hwnd, found := findWindowByTitle(filepath.Base(cwd))
+			if !found {
+				return fmt.Errorf("Windows Terminal window not found for %s", cwd)
+			}
+			raiseWindow(hwnd)
+			return nil
+		}
 	}
 
 	// Step 2: Get current tab index via UI Automation
@@ -62,6 +77,9 @@ func FocusWindowsTerminal(cwd string) error {
 	hwnd, found := findWindowByPID(wtPID)
 	if found {
 		raiseWindow(hwnd)
+		logging.Debug("Window focused for PID %d", wtPID)
+	} else {
+		logging.Debug("Window not found for PID %d", wtPID)
 	}
 
 	return nil
@@ -74,16 +92,21 @@ func findWindowsTerminalPID() (int, error) {
 	for i := 0; i < 20; i++ { // safety limit
 		parentPID, err := getParentProcessID(currentPID)
 		if err != nil {
+			logging.Debug("findWindowsTerminalPID step %d: getParentProcessID(%d) failed: %v", i, currentPID, err)
 			return 0, err
 		}
 		if parentPID == 0 {
+			logging.Debug("findWindowsTerminalPID step %d: reached root (currentPID=%d)", i, currentPID)
 			return 0, fmt.Errorf("reached root process without finding WindowsTerminal")
 		}
 		name, err := getProcessName(parentPID)
 		if err != nil {
-			// continue walking
-		} else if strings.EqualFold(name, "WindowsTerminal.exe") {
-			return parentPID, nil
+			logging.Debug("findWindowsTerminalPID step %d: parent=%d name=UNKNOWN err=%v", i, parentPID, err)
+		} else {
+			logging.Debug("findWindowsTerminalPID step %d: parent=%d name=%s", i, parentPID, name)
+			if strings.EqualFold(name, "WindowsTerminal.exe") {
+				return parentPID, nil
+			}
 		}
 		currentPID = parentPID
 	}
@@ -257,6 +280,34 @@ func ParseFocusWindowsArg(arg string) string {
 		return arg
 	}
 	return cwd
+}
+
+// savedTerminalPIDPath returns the temp file path used to store the
+// Windows Terminal PID between hook time and notification-click time.
+func savedTerminalPIDPath() string {
+	return filepath.Join(os.TempDir(), "claude-notif-terminal.pid")
+}
+
+// saveTerminalPID stores the given Windows Terminal PID to a temp file
+// so that the click-to-focus handler can locate the window even though
+// the Protocol Activation process has a different parent chain.
+func saveTerminalPID(pid int) error {
+	path := savedTerminalPIDPath()
+	return os.WriteFile(path, []byte(strconv.Itoa(pid)), 0644)
+}
+
+// loadSavedTerminalPID reads the previously saved Windows Terminal PID.
+func loadSavedTerminalPID() (int, error) {
+	path := savedTerminalPIDPath()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		return 0, err
+	}
+	return pid, nil
 }
 
 // FocusWindowOptions holds optional parameters for window focus.
