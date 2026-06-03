@@ -24,7 +24,8 @@ var (
 	procGetWindowThreadProcessId = user32.NewProc("GetWindowThreadProcessId")
 	procShowWindow               = user32.NewProc("ShowWindow")
 	procIsWindowVisible          = user32.NewProc("IsWindowVisible")
-	procSwitchToThisWindow       = user32.NewProc("SwitchToThisWindow")
+	procSetForegroundWindow      = user32.NewProc("SetForegroundWindow")
+	procKeybdEvent               = user32.NewProc("keybd_event")
 )
 
 // FocusWindowsTerminal focuses the Windows Terminal window matching cwd,
@@ -208,11 +209,16 @@ func findWindowByTitle(folderName string) (syscall.Handle, bool) {
 }
 
 // raiseWindow restores and raises the window to foreground.
-// Uses SwitchToThisWindow which reliably brings a window to the foreground
-// regardless of the calling process's foreground rights.
+// Uses the Alt-key hack: simulating an Alt keypress before SetForegroundWindow
+// bypasses Windows' foreground-window restriction.
 func raiseWindow(hwnd syscall.Handle) {
 	procShowWindow.Call(uintptr(hwnd), 9) // SW_RESTORE
-	procSwitchToThisWindow.Call(uintptr(hwnd), 1)
+
+	// Alt-key hack: Windows allows SetForegroundWindow when a modifier key
+	// (Alt) is physically held. We synthesize one to bypass the restriction.
+	procKeybdEvent.Call(0x12, 0, 0, 0)               // VK_MENU (Alt) down
+	procSetForegroundWindow.Call(uintptr(hwnd))      // Bring to front
+	procKeybdEvent.Call(0x12, 0, 2, 0)               // VK_MENU (Alt) up
 }
 
 // getCurrentTabIndex uses PowerShell UI Automation to find the selected tab index.
