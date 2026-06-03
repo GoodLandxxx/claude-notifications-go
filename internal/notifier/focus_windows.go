@@ -62,18 +62,11 @@ func FocusWindowsTerminal(cwd string) error {
 		}
 	}
 
-	// Step 2: Get current tab index via UI Automation
-	tabIdx, err := getCurrentTabIndex(wtPID)
-	if err == nil && tabIdx >= 0 {
-		// Step 3: Focus tab via wt.exe
-		if err := focusTab(tabIdx); err != nil {
-			logging.Debug("wt.exe focus-tab failed: %v", err)
-		}
-	} else {
-		logging.Debug("Could not get current tab index: %v", err)
-	}
-
-	// Step 4: Raise window via Win32 API
+	// Step 2: Raise window via Win32 API
+	// Note: wt.exe focus-tab is NOT used here because calling it from a
+	// Protocol Activation process (outside any Windows Terminal window)
+	// creates a NEW Windows Terminal window instead of focusing the existing
+	// one. Window-level focus via SetForegroundWindow is reliable.
 	hwnd, found := findWindowByPID(wtPID)
 	if found {
 		raiseWindow(hwnd)
