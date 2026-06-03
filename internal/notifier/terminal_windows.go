@@ -24,12 +24,17 @@ func sendWindowsNotification(title, body, cwd string) error {
 		return beeep.Notify(title, body, "")
 	}
 
+	// go-toast's Windows Runtime COM API fails to parse XML containing emoji
+	// characters (supplementary plane runes). Strip them while preserving CJK.
+	cleanTitle := stripEmoji(title)
+	cleanBody := stripEmoji(body)
+
 	activationArgs := fmt.Sprintf("%s://focus?cwd=%s", protocolScheme, url.QueryEscape(cwd))
 
 	n := toast.Notification{
 		AppID:               "Claude Code Notifications",
-		Title:               title,
-		Body:                body,
+		Title:               cleanTitle,
+		Body:                cleanBody,
 		ActivationType:      toast.Protocol,
 		ActivationArguments: activationArgs,
 	}
@@ -41,6 +46,20 @@ func sendWindowsNotification(title, body, cwd string) error {
 
 	logging.Debug("Windows notification sent with Protocol activation: %s", activationArgs)
 	return nil
+}
+
+// stripEmoji removes supplementary-plane characters (mostly emoji) from a
+// string while preserving Basic Multilingual Plane text including CJK.
+// go-toast's underlying Windows Runtime XML parser fails on emoji in CDATA.
+func stripEmoji(s string) string {
+	var out []rune
+	for _, r := range s {
+		if r > 0xFFFF {
+			continue
+		}
+		out = append(out, r)
+	}
+	return string(out)
 }
 
 // ensureProtocolRegistered registers the claude-notif:// protocol handler
